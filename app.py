@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_file
 import pandas as pd
 import os
+import uuid
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
@@ -27,27 +28,35 @@ def process_file():
     if file_ext not in allowed_extensions:
         return jsonify({"error": "Invalid file format. Only .xlsx and .csv allowed."}), 400
     
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    # Ensure unique filenames to avoid overwriting
+    unique_filename = f"{uuid.uuid4().hex}{file_ext}"
+    file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
     file.save(file_path)
     
-    # Process file based on type
-    if file_ext == '.xlsx':
-        df = pd.read_excel(file_path)
-    else:
-        df = pd.read_csv(file_path)
-    
-    # Example Processing: Add a new column
-    df['Processed'] = 'Yes'
-    
-    output_filename = f"processed_{file.filename}"
-    output_path = os.path.join(PROCESSED_FOLDER, output_filename)
-    
-    if file_ext == '.xlsx':
-        df.to_excel(output_path, index=False)
-    else:
-        df.to_csv(output_path, index=False)
-    
-    return send_file(output_path, as_attachment=True)
+    try:
+        if file_ext == '.xlsx':
+            df = pd.read_excel(file_path)
+        else:
+            df = pd.read_csv(file_path)
+        
+        # Example Processing: Add a new column
+        df['Processed'] = 'Yes'
+        
+        output_filename = f"processed_{unique_filename}"
+        output_path = os.path.join(PROCESSED_FOLDER, output_filename)
+        
+        if file_ext == '.xlsx':
+            df.to_excel(output_path, index=False)
+            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        else:
+            df.to_csv(output_path, index=False)
+            mimetype = 'text/csv'
+        
+        return send_file(output_path, as_attachment=True, mimetype=mimetype)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        os.remove(file_path)  # Cleanup uploaded file after processing
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
