@@ -1,36 +1,76 @@
-from flask import Flask, request, send_file
-import pandas as pd
 import os
+import pandas as pd
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
+import smtplib
+from email.message import EmailMessage
 
 app = Flask(__name__)
+CORS(app)  # Allow CORS for API requests
 
-UPLOAD_FOLDER = "uploads"
-OUTPUT_FOLDER = "outputs"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+# Load the master SKU file
+MASTER_SKU_FILE = "1500Skus.xlsx"
+if not os.path.exists(MASTER_SKU_FILE):
+    raise FileNotFoundError(f"{MASTER_SKU_FILE} not found. Upload it to the project directory.")
 
-@app.route('/process', methods=['POST'])
+master_skus = pd.read_excel(MASTER_SKU_FILE)
+
+# Email settings (Update with your credentials)
+EMAIL_SENDER = "your-email@gmail.com"
+EMAIL_PASSWORD = "your-app-password"  # Use App Password if using Gmail
+
+@app.route('/upload', methods=['POST'])
 def process_file():
-    if 'file' not in request.files:
-        return {"error": "No file provided"}, 400
+    """Handles file upload, processes it, and sends output via email."""
+    
+    # 1️⃣ Get uploaded file and email
+    if 'file' not in request.files or 'email' not in request.form:
+        return jsonify({"error": "Missing file or email"}), 400
 
-    file = request.files['file']
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(file_path)
+    uploaded_file = request.files['file']
+    email = request.form['email']
 
-    # Process the file using the logic from 1500.py
-    output_filename = process_stock_data(file_path)
+    if uploaded_file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
 
-    return send_file(output_filename, as_attachment=True)
+    # 2️⃣ Read uploaded Excel file
+    uploaded_data = pd.read_excel(uploaded_file)
 
-def process_stock_data(file_path):
-    """Process stock data similar to 1500.py."""
-    df = pd.read_excel(file_path)  # Modify for CSV if needed
-    df["Processed"] = "Yes"  # Dummy processing, replace with real logic
+    # 3️⃣ Compare SKUs (Assume column name is "SKU" in both files)
+    matched_skus = uploaded_data[uploaded_data['SKU'].isin(master_skus['SKU'])]
 
-    output_file = os.path.join(OUTPUT_FOLDER, "processed_" + os.path.basename(file_path))
-    df.to_excel(output_file, index=False)
-    return output_file
+    # 4️⃣ Save output file
+    output_filename = "matched_skus.xlsx"
+    matched_skus.to_excel(output_filename, index=False)
+
+    # 5️⃣ Send email with processed file
+    if send_email(email, output_filename):
+        return jsonify({"message": "File processed & sent successfully!"}), 200
+    else:
+        return jsonify({"error": "Failed to send email"}), 500
+
+def send_email(receiver_email, attachment_path):
+    """Sends an email with the processed file."""
+    try:
+        msg = EmailMessage()
+        msg['Subject'] = "Processed SKU File"
+        msg['From'] = EMAIL_SENDER
+        msg['To'] = receiver_email
+        msg.set_content("Please find the processed SKU file attached.")
+
+        # Attach file
+        with open(attachment_path, "rb") as f:
+            msg.add_attachment(f.read(), maintype="application", subtype="xlsx", filename=attachment_path)
+
+        # Send email
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+            server.send_message(msg)
+
+        return True
+    except Exception as e:
+        print(f"Email Error: {e}")
+        return False
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
